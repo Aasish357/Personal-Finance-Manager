@@ -29,6 +29,15 @@ _url = normalise_database_url(settings.database_url)
 _is_sqlite = settings.database_url.startswith("sqlite")
 
 
+def _is_pgbouncer(url: str) -> bool:
+    """
+    True for Supabase's pooler host, which is PgBouncer. Port 6543 is the
+    transaction-mode pooler; 5432 on that host is the session pooler, which
+    keeps one backend for the life of the connection and is safe.
+    """
+    return "pooler.supabase.com" in url and ":6543" in url
+
+
 def _engine_kwargs() -> dict:
     if _is_sqlite:
         # SQLite needs this connect arg when used from multiple threads
@@ -45,10 +54,24 @@ def _engine_kwargs() -> dict:
         # Recycle before the server's idle timeout kills a pooled connection.
         "pool_recycle": settings.db_pool_recycle_seconds,
     }
-    # Supabase requires TLS. Only add it if the URL doesn't already say so,
-    # otherwise the two settings conflict.
+
+    connect_args: dict = {}
     if "sslmode" not in _url:
-        kwargs["connect_args"] = {"sslmode": "require"}
+        connect_args["sslmode"] = "require"
+
+    # Supabase's connection pooler is PgBouncer in *transaction* mode, which
+    # hands a different backend connection to each client transaction. psycopg 3
+    # prepares statements server-side after a query runs a few times
+    # (prepare_threshold defaults to 5); a prepared statement belongs to the
+    # backend that created it, so reusing one that PgBouncer has since swapped
+    # out fails intermittently -- and only in production, under real traffic.
+    # Disabling server-side preparation costs a negligible amount of parsing
+    # and removes the whole failure mode.
+    if _is_pgbouncer(_url):
+        connect_args["prepare_threshold"] = None
+
+    if connect_args:
+        kwargs["connect_args"] = connect_args
     return kwargs
 
 

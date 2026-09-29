@@ -63,11 +63,28 @@ Connection string (URI)**:
 postgresql://postgres.PROJECT-REF:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
-⚠️ **A password containing `@`, `#`, `/` or `:` must be percent-encoded** — those are structural
-characters in a URI. `@` becomes `%40`, so a password written `mypass@word` must be typed
+⚠️ **If your password contains `@`, `#`, `/` or `:` it must be percent-encoded** — those characters are
+structural in a URI. `@` becomes `%40`, so a password written `mypass@word` must be typed
 `mypass%40word`. Get it wrong and the URL silently parses the host as `word@db.example.co` and
 truncates the password, which surfaces as a confusing DNS or authentication error rather than a
 clear message. Whatever you paste into Render's `DATABASE_URL` field needs the same encoding.
+
+⚠️ **Use the connection pooler, not the direct `db.<ref>.supabase.co` host.** Supabase's direct
+hostname is **IPv6-only** — it has no A record at all. Any host without IPv6 (which includes
+Render's build containers) fails with `Network is unreachable` against an `fd00::`-style address.
+The pooler hostname is IPv4, so it works from anywhere. Take the URI from the dashboard's
+**Connection string** dialog and select the **Session pooler** or **Transaction pooler** tab; the
+username becomes `postgres.<project-ref>`:
+
+```
+postgresql://postgres.PROJECT-REF:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+Because the pooler is PgBouncer in transaction mode, `app/db/database.py` sets
+`prepare_threshold=None` for it. psycopg 3 otherwise prepares statements server-side after a few
+executions, and a prepared statement belongs to the backend connection that created it — which
+PgBouncer is free to swap out underneath you, producing intermittent failures that only appear
+under real traffic.
 
 - Use the **transaction pooler (`:6543`)** for a long-running API server. The
   session pooler (`:5432`) is only needed for prepared statements or advisory
