@@ -88,18 +88,26 @@ async def get_monthly_analytics(db: Session = Depends(get_db), current_user: Use
 @router.get("/categories")
 async def get_category_analytics(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Expense totals grouped by category, across all time, highest spend first."""
+    # Group by the raw column, NOT by coalesce(...). Postgres requires every
+    # selected expression to appear in GROUP BY and rejects the wrapped form
+    # ("column must appear in the GROUP BY clause"); SQLite happens to accept
+    # it, so this only shows up on a real Postgres run. NULL rows are folded
+    # into "uncategorized" in Python instead, where it costs nothing.
     rows = (
         db.query(
-            func.coalesce(Transaction.category_id, UNCATEGORIZED).label("cid"),
+            Transaction.category_id.label("cid"),
             func.sum(Transaction.amount).label("amount"),
         )
         .filter(Transaction.user_id == current_user.id, Transaction.transaction_type == "expense")
-        .group_by(func.coalesce(Transaction.category_id, UNCATEGORIZED))
+        .group_by(Transaction.category_id)
         .all()
     )
     names = _own_category_names(db, current_user.id)
 
-    totals = {r.cid: float(r.amount or 0) for r in rows}
+    totals: dict[str, float] = {}
+    for r in rows:
+        key = r.cid or UNCATEGORIZED
+        totals[key] = totals.get(key, 0.0) + float(r.amount or 0)
     total_spent = sum(totals.values())
 
     result = [

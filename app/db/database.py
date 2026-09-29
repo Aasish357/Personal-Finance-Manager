@@ -8,19 +8,24 @@ from app.core.config import settings
 # time, so it is kept in one obvious place.
 
 
-def _normalise_url(url: str) -> str:
+def normalise_database_url(url: str) -> str:
     """
     Supabase hands out a connection string beginning `postgresql://`, which
     SQLAlchemy maps to the psycopg2 driver. This project uses psycopg 3, so a
     bare postgres:// scheme is rewritten to the explicit `+psycopg` dialect.
     An explicit driver (e.g. `postgresql+psycopg2://`) is left alone.
+
+    Exported so the test suite creates its engine the same way the app does.
     """
     if url.startswith("postgresql://"):
         return "postgresql+psycopg://" + url[len("postgresql://") :]
     return url
 
 
-_url = _normalise_url(settings.database_url)
+# Backwards-compatible private alias.
+_normalise_url = normalise_database_url
+
+_url = normalise_database_url(settings.database_url)
 _is_sqlite = settings.database_url.startswith("sqlite")
 
 
