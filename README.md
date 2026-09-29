@@ -6,8 +6,9 @@ questions about your own data.
 
 ## Current state
 
-A working full-stack app: 28 endpoints, 8 frontend pages, 79 passing backend
-tests, clean `tsc` and a compiling production build.
+A working full-stack app: 28 endpoints, 8 frontend pages, 84 passing backend
+tests, clean `tsc` and a compiling production build. Verified against both
+SQLite and PostgreSQL 17.6.
 
 This README describes the app **as it is now**, not its history — `git log` is
 the changelog. (An earlier version of this file carried a "what changed" list,
@@ -30,7 +31,7 @@ Feature highlights:
 
 | Check | Result |
 |---|---|
-| `pytest` | 79 passed |
+| `pytest` | 84 passed (SQLite) and 84 passed (PostgreSQL 17.6) |
 | `npx tsc --noEmit` | clean |
 | `npm run build` | Compiled successfully |
 | `alembic upgrade head` → `downgrade base` | round trip, constraints enforced |
@@ -62,12 +63,20 @@ Connection string (URI)**:
 postgresql://postgres.PROJECT-REF:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
+⚠️ **A password containing `@`, `#`, `/` or `:` must be percent-encoded** — those are structural
+characters in a URI. `@` becomes `%40`, so a password written `mypass@word` must be typed
+`mypass%40word`. Get it wrong and the URL silently parses the host as `word@db.example.co` and
+truncates the password, which surfaces as a confusing DNS or authentication error rather than a
+clear message. Whatever you paste into Render's `DATABASE_URL` field needs the same encoding.
+
 - Use the **transaction pooler (`:6543`)** for a long-running API server. The
   session pooler (`:5432`) is only needed for prepared statements or advisory
   locks. Keep `?sslmode=require` — Supabase rejects plaintext connections.
   Paste the dashboard string verbatim: a bare `postgresql://` scheme is
   rewritten to the psycopg 3 dialect (`postgresql+psycopg://`) automatically in
-  `app/db/database.py`.
+  `app/db/database.py`, and `app/db/migrations/env.py` applies the same
+  rewrite plus percent-escaping so `alembic upgrade head` works with an encoded
+  password.
 - Schema is managed by **Alembic**: `alembic upgrade head` applies the
   baseline migration, and later changes go through
   `alembic revision --autogenerate -m "..."`. `DB_AUTO_CREATE_TABLES` is
