@@ -4,18 +4,37 @@ A FastAPI backend + React (TypeScript) frontend for tracking transactions,
 budgets, and spend alerts, with a lightweight AI assistant for asking
 questions about your own data.
 
-## What changed from the original scaffold
+## Current state
 
-The original repo didn't run — the models used Django-style
-`auto_now_add`/`auto_now` (not a real SQLAlchemy API), several endpoints were
-`TODO: pass` stubs, and `register()` had a bug that would crash on the first
-call. Rather than list every fix here, the short version: auth is now real
-(JWT, with a working login/`/me`), categories/analytics/alerts are fully
-implemented instead of stubbed, budget alerts fire automatically instead of
-requiring a manual API call, and both the backend and frontend have been
-verified end-to-end (12 passing backend tests, a clean `tsc`/production
-build, and a manual smoke test of the full register → transact → alert
-flow — see the chat for details if you want the specifics).
+A working full-stack app: 28 endpoints, 8 frontend pages, 60 passing backend
+tests, clean `tsc` and a compiling production build.
+
+This README describes the app **as it is now**, not its history — `git log` is
+the changelog. (An earlier version of this file carried a "what changed" list,
+which went stale within a few commits.)
+
+Feature highlights:
+
+- **Automatic budget alerts.** Recording an expense against a budgeted
+  category re-checks utilization and raises an alert at 75% / 90% / 100%.
+  There is no "create alert" button, by design.
+- **Alerts reconcile both ways.** Deleting — or editing down — the
+  transactions that pushed a budget over stands the alert down, so the alerts
+  page can never disagree with the budget-vs-actual numbers.
+- **A local AI assistant** that answers only from your own figures, backed by
+  an Ollama model on your machine.
+- **Supabase Postgres** as the database, with Alembic-managed schema.
+- **Per-user data isolation**, including categories.
+
+### Verified
+
+| Check | Result |
+|---|---|
+| `pytest` | 60 passed |
+| `npx tsc --noEmit` | clean |
+| `npm run build` | Compiled successfully |
+| `alembic upgrade head` → `downgrade base` | round trip, constraints enforced |
+| Assistant against a live local model | grounded answers, correct figures |
 
 ## Backend
 
@@ -61,10 +80,11 @@ postgresql://postgres.PROJECT-REF:YOUR-PASSWORD@aws-0-REGION.pooler.supabase.com
   `DB_AUTO_CREATE_TABLES=true`.
 
 - API docs: http://localhost:8000/docs
-- Health check: http://localhost:8000/health — unauthenticated, reports
-  `{"status": "ok"|"degraded", "database": {"connected": bool}}`. Point your
-  platform's health check here so a bad database connection is obvious
-  immediately rather than as a wall of 500s. The app also logs a loud warning
+- Health check: http://localhost:8000/health — unauthenticated, returns
+  `{"status": "ok"|"degraded", "database": {"connected": bool}, "warnings": [...]}`
+  and answers `200` either way, so a bad database reads as *degraded* rather
+  than *down*. It flags a default `SECRET_KEY` or wildcard `CORS_ORIGINS` in
+  `warnings` — check those before deploying. The app also logs a loud warning
   at startup if `DATABASE_URL` still contains the `.env.example` placeholders.
 - Run tests: `pytest` (runs against throwaway SQLite by default; set
   `TEST_DATABASE_URL` to point the suite at a real Postgres instead)
@@ -92,19 +112,35 @@ npm start
 
 ```
 app/                  FastAPI backend
-  api/v1/             Route handlers (auth, transactions, budgets, alerts, categories, analytics, assistant)
-  core/                Config, JWT/password security, auth dependency
-  db/                  SQLAlchemy models, session, Alembic migrations
-  schemas/             Pydantic request/response models
-  utils/               Budget-alert evaluation, small helpers
-  tests/               pytest suite
+  main.py             App factory, CORS, startup lifespan
+  api/
+    health.py         GET /health (unauthenticated liveness + config warnings)
+    v1/               Route handlers (auth, transactions, budgets, alerts,
+                      categories, analytics, assistant)
+  core/
+    config.py         Settings from .env
+    security.py       bcrypt hashing, JWT encode/decode
+    deps.py           get_current_user dependency
+    rate_limit.py     In-process fixed-window limiter for auth
+  db/
+    database.py       Engine + session, branched per dialect
+    models/           User, Category, Transaction, Budget, Alert
+    mixins.py         TimestampMixin (created_at / updated_at)
+    migrations/       Alembic env + versions/
+  schemas/            Pydantic request/response models
+  utils/
+    budget_alerts.py  Alert reconciliation (raise + resolve)
+    ollama.py         Local LLM client (native /api/chat over httpx)
+    helpers.py        Small shared helpers
+  tests/              pytest suite (8 files, 60 tests)
 
 src/                  React frontend
-  pages/               One component per route
-  components/          Shared layout + route guard
-  services/            One module per API resource (thin axios wrappers)
-  contexts/             AuthContext (session state, login/register/logout)
-  types/                Shared TypeScript interfaces matching the API schemas
+  pages/              8 components, one per route
+  components/         AppLayout (shell) + ProtectedRoute (route guard)
+  services/           apiClient (axios + interceptors) + one module per resource
+  contexts/           AuthContext (session state, login/register/logout)
+  types/              Shared TypeScript interfaces matching the API schemas
+  utils/              Currency/date formatting, API error extraction
 ```
 
 ## Notable design decisions
@@ -131,8 +167,10 @@ src/                  React frontend
   model is configured and whether Ollama is reachable; the assistant page shows
   it and warns if the model isn't pulled. If Ollama is down, the endpoint still
   answers from the rule-based fallback and says why.
-- **SQLite by default.** Swap `DATABASE_URL` in `.env` for Postgres/MySQL
-  when you're ready to deploy; nothing else needs to change.
+- **Postgres is the target; SQLite is the convenience fallback.** The engine in
+  `app/db/database.py` branches on the URL, so `DATABASE_URL=sqlite:///./finance.db`
+  with `DB_AUTO_CREATE_TABLES=true` still works for offline work, but Supabase
+  is what the schema and migrations target.
 - **Everything is scoped to the authenticated user.** Categories used to be a
   single global table, so any signed-in user could list and delete everyone
   else's. They now carry `user_id`, and the budget/transaction endpoints
@@ -150,3 +188,34 @@ src/                  React frontend
   reconciles both the old and new category/month, so lowering an amount
   stands an alert down and moving spending to another category resolves the
   one it left behind.
+
+## Security notes
+
+Read this before exposing the app to anyone.
+
+- **`.env` is gitignored and must stay that way.** It holds the real Supabase
+  connection string, the JWT secret, and any API keys. `.env.example` (the
+  placeholder template) *is* committed, which is intentional. `.gitignore`
+  also excludes `.venv/`, `node_modules/`, `build/` and `*.db` — without the
+  `.venv/` rule a `git add .` would commit ~5,000 virtualenv files.
+- **Set a real `SECRET_KEY`.** The default `dev-secret-key-change-me` is
+  committed in `app/core/config.py`, so anyone can forge a valid JWT with it.
+  Generate one with
+  `python -c "import secrets; print(secrets.token_hex(32))"`. `/health`
+  reports `degraded` while it's still the default.
+- **Restrict `CORS_ORIGINS`.** `*` lets any site call the API from a browser.
+  Set it to your real frontend origin. `/health` also flags this.
+- **The rate limiter is per-process.** Counters live in memory, so behind N
+  workers the effective limit is N× what you configured. Put a shared store
+  (Redis, or Postgres via Supabase) in front of it if you scale out.
+- **JWTs are stored in `localStorage`**, which is readable by any script that
+  gets injected into the page. Acceptable for a single-user app; for anything
+  public-facing, prefer an httpOnly cookie.
+- **Passwords**: bcrypt via passlib, minimum 8 characters. There is no
+  complexity requirement, no breached-password check, and no email
+  verification.
+- **Serve over HTTPS.** Nothing in the app terminates TLS, so put it behind a
+  reverse proxy that does.
+- **The assistant sends no data anywhere.** It talks to Ollama on
+  `localhost` over plain HTTP. Fine on your own machine; don't expose that
+  port to a network you don't control.
