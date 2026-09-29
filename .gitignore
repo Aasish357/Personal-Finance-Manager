@@ -1,0 +1,45 @@
+# ---- Secrets & local config ----
+# .env holds the real database URL, JWT secret and any API keys. Never commit
+# it. .env.example IS committed -- it is the template with placeholders only.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments (created by `python -m venv .venv`)
+.venv/
+venv/
+env/
+
+# ---- Local databases ----
+# finance.db (local dev) and test_finance.db (pytest scratch space).
+# The real data lives in Supabase; see .env.example.
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Node ----
+node_modules/
+build/
+coverage/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ---- Editors / OS ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
