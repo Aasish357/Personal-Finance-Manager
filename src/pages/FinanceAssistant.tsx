@@ -60,8 +60,10 @@ const FinanceAssistant: React.FC = () => {
 
       {status && !status.available && (
         <div className="form-error" style={{ marginBottom: '1rem' }}>
-          Can't reach Ollama at {status.base_url}. Replies will come from the built-in
-          fallback until it's running — start it with <code>ollama serve</code>.
+          Can't reach Ollama at {status.base_url}. Replies will come from the
+          built-in fallback — still computed from your real data, but not
+          conversational. On a cloud host there is no local Ollama, so point{' '}
+          <code>OLLAMA_BASE_URL</code> at a machine that runs it, or accept the fallback.
         </div>
       )}
       {status && status.available && !status.model_installed && (

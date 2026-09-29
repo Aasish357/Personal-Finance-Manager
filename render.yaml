@@ -1,0 +1,41 @@
+# Render Blueprint for the FastAPI backend.
+#
+# Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# Set the `sync: false` env vars in the Render dashboard when prompted.
+#
+# IMPORTANT: the AI assistant calls a local Ollama server. Render runs in the
+# cloud and has no Ollama, so unless you point OLLAMA_BASE_URL at a machine
+# that does (see OLLAMA_BASE_URL below), the assistant will answer using its
+# rule-based fallback, which is still grounded in your real data.
+services:
+  - type: web
+    name: finance-api
+    runtime: python
+    plan: free          # free instances sleep after inactivity; first request is slow
+    pythonVersion: "3.13"
+    buildCommand: pip install -r requirements.txt
+    # Alembic must run before the new code serves traffic. create_all would
+    # not do this -- it only ever creates missing tables, so it would silently
+    # ignore column and constraint changes.
+    preDeployCommand: alembic upgrade head
+    # Render injects $PORT; the app must bind 0.0.0.0, not localhost.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false        # paste your Supabase URI here
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_AUTO_CREATE_TABLES
+        value: "false"     # Alembic owns the schema
+      - key: CORS_ORIGINS
+        sync: false        # e.g. https://your-app.vercel.app (comma-separate extras)
+      - key: OLLAMA_BASE_URL
+        value: http://localhost:11434
+      - key: OLLAMA_MODEL
+        value: llama3:latest
+      - key: OLLAMA_TIMEOUT_SECONDS
+        value: "120"
+      - key: OLLAMA_TEMPERATURE
+        value: "0.0"
