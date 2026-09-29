@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.core.deps import get_current_user
@@ -13,6 +13,11 @@ from app.schemas.transaction import Transaction, TransactionCreate, TransactionU
 from app.utils.budget_alerts import reconcile_budget_alerts
 
 router = APIRouter()
+
+# A caller that omits limit/offset still receives every row, so the default is
+# deliberately generous; MAX_PAGE_SIZE caps what a client can ask for.
+DEFAULT_PAGE_SIZE = 200
+MAX_PAGE_SIZE = 500
 
 
 def _month_start(moment: datetime) -> datetime:
@@ -55,17 +60,41 @@ async def create_transaction(
 
 @router.get("/transactions", response_model=List[Transaction])
 async def get_transactions(
+    response: Response,
     category_id: Optional[str] = None,
     transaction_type: Optional[str] = None,
+    limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Transactions, newest first.
+
+    `limit`/`offset` are optional and the response stays a plain JSON array, so
+    existing callers are unaffected -- a caller that passes neither still gets
+    every row, exactly as before. The unpaginated total is returned in the
+    X-Total-Count header so a client can render page controls without a second
+    request.
+    """
     query = db.query(DBTransaction).filter(DBTransaction.user_id == current_user.id)
     if category_id:
         query = query.filter(DBTransaction.category_id == category_id)
     if transaction_type:
         query = query.filter(DBTransaction.transaction_type == transaction_type)
-    return query.order_by(DBTransaction.transaction_date.desc()).all()
+
+    # Count before slicing, and over the same filters, so paging stays correct
+    # when a filter is active.
+    total = query.count()
+    response.headers["X-Total-Count"] = str(total)
+
+    rows = (
+        query.order_by(DBTransaction.transaction_date.desc(), DBTransaction.id)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return rows
 
 
 @router.get("/transactions/{transaction_id}", response_model=Transaction)

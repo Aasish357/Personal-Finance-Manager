@@ -1,0 +1,59 @@
+# Local development stack: Postgres (a stand-in for Supabase) + the API.
+#
+# The assistant is deliberately NOT containerised -- it calls Ollama on the
+# host, so run `ollama serve` separately and leave OLLAMA_BASE_URL as-is.
+#
+#   docker compose up -d
+#   DATABASE_URL=postgresql+psycopg://finance:finance@localhost:5432/finance
+#   alembic upgrade head
+#   uvicorn app.main:app --reload
+#
+# For Supabase instead, just point DATABASE_URL at the real project and skip
+# this file entirely.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: finance-db
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: finance
+      POSTGRES_DB: finance
+    ports:
+      - "5432:5432"
+    volumes:
+      - finance-db-data:/var/lib/postgresql/data
+    healthcheck:
+      # Keep depends_on honest: the API should not start against a DB that
+      # isn't accepting connections yet.
+      test: ["CMD-SHELL", "pg_isready -U finance -d finance"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finance-api
+    environment:
+      DATABASE_URL: postgresql+psycopg://finance:finance@db:5432/finance
+      DB_AUTO_CREATE_TABLES: "false"
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+      CORS_ORIGINS: http://localhost:3000
+      # host.docker.internal reaches Ollama running on your machine.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:latest}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Reload the code on save during development.
+      - .:/app
+      - venv:/app/.venv
+
+volumes:
+  finance-db-data:
+  venv:

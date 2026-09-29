@@ -10,9 +10,22 @@ export interface NewTransaction {
   transaction_date: string;
 }
 
-export async function listTransactions(): Promise<Transaction[]> {
-  const { data } = await apiClient.get<Transaction[]>('/transactions');
-  return data;
+export interface TransactionPage {
+  transactions: Transaction[];
+  total: number;
+}
+
+/**
+ * Newest first. `limit`/`offset` are optional -- omit them and you get
+ * everything, which is what the callers that just want a list do. The total
+ * arrives in the X-Total-Count header.
+ */
+export async function listTransactions(
+  params: { limit?: number; offset?: number } = {}
+): Promise<TransactionPage> {
+  const { data, headers } = await apiClient.get<Transaction[]>('/transactions', { params });
+  const total = Number(headers['x-total-count'] ?? data.length);
+  return { transactions: data, total };
 }
 
 export async function createTransaction(payload: NewTransaction): Promise<Transaction> {

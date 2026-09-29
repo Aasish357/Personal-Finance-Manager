@@ -24,6 +24,11 @@ const Transactions: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Non-null when the form is editing an existing row rather than creating one.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Paging. PAGE_SIZE rows are fetched at a time; `total` comes from the
+  // X-Total-Count header so the controls know how many pages exist.
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const PAGE_SIZE = 25;
 
   const categoryNameById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -31,19 +36,26 @@ const Transactions: React.FC = () => {
     return map;
   }, [categories]);
 
-  const loadData = () => {
+  const loadData = (pageToLoad: number = page) => {
     setIsLoading(true);
-    return Promise.all([transactionService.listTransactions(), categoryService.listCategories()])
+    return Promise.all([
+      transactionService.listTransactions({ limit: PAGE_SIZE, offset: pageToLoad * PAGE_SIZE }),
+      categoryService.listCategories(),
+    ])
       .then(([tx, cat]) => {
-        setTransactions(tx);
+        setTransactions(tx.transactions);
+        setTotal(tx.total);
         setCategories(cat);
       })
       .finally(() => setIsLoading(false));
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleAddCategory = async () => {
     if (!newCategoryName.trim()) return;
@@ -56,6 +68,14 @@ const Transactions: React.FC = () => {
   const handleDelete = async (id: string) => {
     await transactionService.deleteTransaction(id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+    // Keep the total and page position honest: removing the last row on the
+    // last page should step back a page rather than show an empty table.
+    setTotal((prev) => prev - 1);
+    if (transactions.length === 1 && page > 0) {
+      setPage((p) => Math.max(0, p - 1));
+    } else {
+      loadData(page);
+    }
   };
 
   /** Clicking Edit on a row loads it into the form above in "editing" mode. */
@@ -94,11 +114,19 @@ const Transactions: React.FC = () => {
         await transactionService.updateTransaction(editingId, payload);
         setEditingId(null);
         setForm(emptyForm);
+        // Stay on the current page: the edited row is where the user left it.
+        await loadData(page);
       } else {
         await transactionService.createTransaction(payload);
         setForm(emptyForm);
+        // A new transaction sorts to the top, so jump to the first page --
+        // otherwise it would be saved but invisible off-screen.
+        if (page === 0) {
+          await loadData(0);
+        } else {
+          setPage(0); // the effect re-fetches
+        }
       }
-      await loadData();
     } catch (err) {
       setError(extractErrorMessage(err, editingId ? 'Could not save those changes.' : 'Could not save that transaction.'));
     } finally {
@@ -268,6 +296,34 @@ const Transactions: React.FC = () => {
           </table>
         )}
       </div>
+
+      {total > 0 && (
+        <div className="panel">
+          <p className="alert-meta">
+            Showing {transactions.length === 0 ? 0 : page * PAGE_SIZE + 1}–
+            {page * PAGE_SIZE + transactions.length} of {total}
+          </p>
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0 || isLoading}
+            >
+              Previous
+            </button>
+            <span className="alert-meta">
+              Page {page + 1} of {totalPages}
+            </span>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={page + 1 >= totalPages || isLoading}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

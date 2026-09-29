@@ -6,7 +6,7 @@ questions about your own data.
 
 ## Current state
 
-A working full-stack app: 28 endpoints, 8 frontend pages, 60 passing backend
+A working full-stack app: 28 endpoints, 8 frontend pages, 79 passing backend
 tests, clean `tsc` and a compiling production build.
 
 This README describes the app **as it is now**, not its history — `git log` is
@@ -30,10 +30,11 @@ Feature highlights:
 
 | Check | Result |
 |---|---|
-| `pytest` | 60 passed |
+| `pytest` | 79 passed |
 | `npx tsc --noEmit` | clean |
 | `npm run build` | Compiled successfully |
 | `alembic upgrade head` → `downgrade base` | round trip, constraints enforced |
+| `docker compose config` | valid |
 | Assistant against a live local model | grounded answers, correct figures |
 
 ## Backend
@@ -188,6 +189,68 @@ src/                  React frontend
   reconciles both the old and new category/month, so lowering an amount
   stands an alert down and moving spending to another category resolves the
   one it left behind.
+- **Analytics aggregates in SQL.** These endpoints used to pull every one of
+  the caller's transactions into Python and sum them there, and
+  `budget-vs-actual` was quadratic — it rescanned the whole transaction list
+  once per budget. The work now happens in `GROUP BY` queries, so the database
+  returns a handful of rows no matter how much history exists. Month grouping
+  uses `extract('year'|'month')`, which Postgres and SQLite both support,
+  rather than branching between `date_trunc` and `strftime`.
+- **Transaction listing is paged, backwards-compatibly.** `GET /transactions`
+  takes optional `limit`/`offset` and still returns a plain JSON array, so
+  callers that pass neither get every row exactly as before. The unpaginated
+  total arrives in the `X-Total-Count` header, which is how the UI renders
+  page controls without a second request.
+
+## Running it locally
+
+The quickest path is SQLite, which needs no database server:
+
+```bash
+# 1. Backend
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS/Linux
+pip install -r requirements.txt
+copy .env.example .env          # then edit the two lines marked below
+
+# 2. Point .env at local SQLite (not Supabase):
+#    DATABASE_URL=sqlite:///./finance.db
+#    DB_AUTO_CREATE_TABLES=true
+# Leave SECRET_KEY alone for local use.
+
+# 3. Run
+uvicorn app.main:app --reload      # http://localhost:8000/docs
+```
+
+```bash
+# 4. Frontend, in a second terminal
+npm install
+npm start                          # http://localhost:3000
+```
+
+For the assistant, install [Ollama](https://ollama.com) and pull a model once:
+
+```bash
+ollama pull llama3:latest
+```
+
+The assistant works without it — it falls back to rule-based replies and says
+so — but you won't get natural-language answers.
+
+### Or with Postgres via Docker
+
+Useful for exercising the same engine and migrations as Supabase:
+
+```bash
+docker compose up -d
+set DATABASE_URL=postgresql+psycopg://finance:finance@localhost:5432/finance
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
+Ollama stays outside the container; the API reaches it via
+`host.docker.internal`.
 
 ## Security notes
 
