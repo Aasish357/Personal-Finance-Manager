@@ -17,11 +17,18 @@ services:
     # additionalProperties: false, so including it makes Render reject the
     # whole Blueprint. The interpreter is pinned by .python-version in the
     # repo root instead, which Render does honour.
-    buildCommand: pip install -r requirements.txt
-    # Alembic must run before the new code serves traffic. create_all would
-    # not do this -- it only ever creates missing tables, so it would silently
-    # ignore column and constraint changes.
-    preDeployCommand: alembic upgrade head
+    # Migrations run here rather than in `preDeployCommand`, because Render
+    # only supports pre-deploy commands on paid plans and this is a free-tier
+    # service ("pre-deploy command is not supported for free tier services").
+    #
+    # Doing it in the build is safe: Alembic records the applied revision in
+    # alembic_version, so re-running on every deploy is a no-op once caught up,
+    # and a failed migration fails the build instead of starting broken code.
+    # DATABASE_URL is available to the build, which is what it needs.
+    #
+    # create_all is not a substitute -- it only ever creates missing tables, so
+    # it would silently ignore column and constraint changes.
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     # Render injects $PORT; the app must bind 0.0.0.0, not localhost.
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
